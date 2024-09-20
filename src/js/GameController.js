@@ -1,99 +1,93 @@
-import { randomFromRange } from './utils';
 import GamePlay from './GamePlay';
-import GameState from './GameState';
 import GameStateService from './GameStateService';
+import GameState from './GameState';
 import Team from './Team';
-import characterGenerator from './generators';
-import themes from './themes';
+import Initialization from './Initialization';
+import EventHandlers from './EventHandlers';
+import Movement from './Movement';
+import Attack from './Attack';
+import EnemyAI from './EnemyAI';
+import { randomFromRange } from './utils';
 import cursors from './cursors';
 import PositionedCharacter from './PositionedCharacter';
 import {
 	Bowman, Swordsman, Magician, Vampire, Undead, Daemon,
 } from './Characters/Characters';
+import themes from './themes';
+import characterGenerator from './generators';
 
 export default class GameController {
 	constructor(gamePlay, stateService) {
 		this.gamePlay = gamePlay;
 		this.stateService = stateService;
+		this.themes = themes;
 		this.userPlayerTypes = [Bowman, Swordsman, Magician];
 		this.compPlayerTypes = [Vampire, Undead, Daemon];
 		this.gameStateService = new GameStateService(localStorage);
+		this.characterGenerator = characterGenerator;
+		this.cursors = cursors;
+		// Инициализация вспомогательных модулей
+		this.initialization = new Initialization(this);
+		this.eventHandlers = new EventHandlers(this);
+		this.movement = new Movement(this);
+		this.attack = new Attack(this);
+		this.enemyAI = new EnemyAI(this);
 
 		this.registerEventListeners();
 	}
 
 	registerEventListeners() {
-		this.gamePlay.addCellEnterListener(this.onCellEnter.bind(this));
-		this.gamePlay.addCellLeaveListener(this.onCellLeave.bind(this));
-		this.gamePlay.addCellClickListener(this.onCellClick.bind(this));
-		this.gamePlay.addNewGameListener(this.onNewGame.bind(this));
-		this.gamePlay.addLoadGameListener(this.onLoadGame.bind(this));
-		this.gamePlay.addSaveGameListener(this.onSaveGame.bind(this));
+		this.gamePlay.addCellEnterListener(this.eventHandlers.onCellEnter.bind(this.eventHandlers));
+		this.gamePlay.addCellLeaveListener(this.eventHandlers.onCellLeave.bind(this.eventHandlers));
+		this.gamePlay.addCellClickListener(this.eventHandlers.onCellClick.bind(this.eventHandlers));
+		this.gamePlay.addNewGameListener(this.eventHandlers.onNewGame.bind(this.eventHandlers));
+		this.gamePlay.addLoadGameListener(this.eventHandlers.onLoadGame.bind(this.eventHandlers));
+		this.gamePlay.addSaveGameListener(this.eventHandlers.onSaveGame.bind(this.eventHandlers));
 	}
 
 	init() {
-		this.isEventsBlocked = true;
-		this.isMoveValid = false;
-		this.isAttackValid = false;
-		this.gameState = new GameState();
-		this.gamePlay.drawUi(Array.from(themes)[0]);
+		this.initialization.init();
+	}
 
-		this.userPlayerTeam = new Team(this.userPlayerTypes, characterGenerator);
-		this.userPlayerTeam.addRandomChar(1, this.gamePlay.initialNumberOfChars);
-		this.compPlayerTeam = new Team(this.compPlayerTypes, characterGenerator);
-		this.compPlayerTeam.addRandomChar(1, this.gamePlay.initialNumberOfChars);
+	loadGame() {
+		const state = this.gameStateService.load();
 
+		this.gameState.setState(state);
 
-		this.placeUserTeamOnBoard();
-		this.placeCompTeamOnBoard();
+		this.userPlayerTeam = new Team(
+			this.userPlayerTypes,
+			this.characterGenerator,
+			this.getCharactersFromPositionedCharacters(),
+		);
+		this.compPlayerTeam = new Team(
+			this.compPlayerTypes,
+			this.characterGenerator,
+			this.getCharactersFromPositionedCharacters(),
+		);
+
+		this.gamePlay.drawUi(Array.from(themes)[this.gameState.currentLevel - 1]);
 		this.gamePlay.redrawPositions(this.gameState.positionedCharacters);
+		this.gamePlay.renderScore(this.gameState.score);
+
 		this.isEventsBlocked = false;
 	}
 
-	placeUserTeamOnBoard() {
-		const positions = this.getInitialPositions('user', this.userPlayerTeam.count);
-
-		this.userPlayerTeam.characters.forEach((character, index) => {
-			this.gameState.positionedCharacters.push(new PositionedCharacter(character, positions[index]));
-		});
+	saveGame() {
+		if (this.isEventsBlocked) {
+			return;
+		}
+		this.gameStateService.save(GameState.from(this.gameState));
 	}
 
-	placeCompTeamOnBoard() {
-		const positions = this.getInitialPositions('comp', this.compPlayerTeam.count);
-
-		this.compPlayerTeam.characters.forEach((character, index) => {
-			this.gameState.positionedCharacters.push(new PositionedCharacter(character, positions[index]));
-		});
-	}
-
-	getInitialPositions(playerType, count) {
-		const positions = [];
-		let counter = 0;
-
-		while (counter < count) {
-			const position = playerType === 'user' ? this.getRandomUserCharPosition() : this.getRandomCompCharPosition();
-
-			if (!positions.includes(position)) {
-				positions.push(position);
-				counter += 1;
+	handleOwnCharacterClick(character, index) {
+		if (this.gameState.selected) {
+			const selectedIndex = this.getIndexByChar(this.gameState.selected);
+			if (selectedIndex !== null && selectedIndex !== undefined) {
+				this.gamePlay.deselectCell(selectedIndex);
 			}
 		}
-		return positions;
-	}
-
-	getRandomUserCharPosition() {
-		return this.getRandomCellInTwoColumns(0);
-	}
-
-	getRandomCompCharPosition() {
-		return this.getRandomCellInTwoColumns(this.gamePlay.boardSize - 2);
-	}
-
-	getRandomCellInTwoColumns(shift) {
-		const { boardSize } = this.gamePlay;
-		const index = randomFromRange(0, boardSize * 2 - 1);
-
-		return index < boardSize ? index * boardSize + shift : (index - boardSize) * boardSize + 1 + shift;
+		this.gameState.selected = character;
+		this.gamePlay.selectCell(index);
 	}
 
 	onNewGame() {
@@ -110,13 +104,13 @@ export default class GameController {
 
 		this.userPlayerTeam = new Team(
 			this.userPlayerTypes,
-			characterGenerator,
-			this.getCharactersFromPositionedCaracters(),
+			this.characterGenerator,
+			this.getCharactersFromPositionedCharacters(),
 		);
 		this.compPlayerTeam = new Team(
 			this.compPlayerTypes,
-			characterGenerator,
-			this.getCharactersFromPositionedCaracters(),
+			this.characterGenerator,
+			this.getCharactersFromPositionedCharacters(),
 		);
 
 		this.gamePlay.drawUi(Array.from(themes)[this.gameState.currentLevel - 1]);
@@ -125,15 +119,28 @@ export default class GameController {
 
 		this.isEventsBlocked = false;
 	}
+	getInitialPositions(side, numberOfPositions) {
+		const { boardSize } = this.gamePlay;
+		const positions = [];
+		const columns = side === 'user' ? [0, 1] : [boardSize - 2, boardSize - 1];
 
+		while (positions.length < numberOfPositions) {
+			const row = Math.floor(Math.random() * boardSize);
+			const column = columns[Math.floor(Math.random() * columns.length)];
+			const position = row * boardSize + column;
+
+			if (!positions.includes(position)) {
+				positions.push(position);
+			}
+		}
+		return positions;
+	}
 	onSaveGame() {
 		if (this.isEventsBlocked) {
 			return;
 		}
 		this.gameStateService.save(GameState.from(this.gameState));
 	}
-
-	// cell event handlers
 
 	onCellClick(index) {
 		if (this.isEventsBlocked) {
@@ -143,54 +150,48 @@ export default class GameController {
 
 		if (!this.gameState.selected && character) {
 			if (this.userPlayerTeam.isOwnCharacter(character)) {
-				this.gameState.selected = character;
-				this.gamePlay.selectCell(index);
-
+				this.handleOwnCharacterClick(character, index);
 				return;
 			}
 			GamePlay.showError('Это не ваш персонаж!');
 			return;
 		}
-		if (this.gameState.selected && this.userPlayerTeam.isOwnCharacter(character)) { // клик на персонаже и
-			const selectedIndex = this.getIndexByChar(this.gameState.selected);
-			this.gamePlay.deselectCell(selectedIndex);
-			this.gameState.selected = character;
-			this.gamePlay.selectCell(index);
+
+		if (this.gameState.selected && this.userPlayerTeam.isOwnCharacter(character)) {
+			this.handleOwnCharacterClick(character, index);
 			return;
 		}
+
 		if (!(this.isAttackValid || this.isMoveValid)) {
 			GamePlay.showError('Не допустимое действие!');
 			return;
 		}
+
 		if (this.isMoveValid) {
-			this.isEventsBlocked = true;
-
-			this.gamePlay.setCursor(cursors.notallowed);
-			this.deselectCharCells(index);
-			this.moveCharacterToIndex(this.gameState.selected, index);
-			this.gameState.selected = null;
-			this.enemyTurn();
-
-			this.isEventsBlocked = false;
+			this.movement.moveCharacter(index);
 			return;
 		}
+
 		if (this.isAttackValid) {
-			this.isEventsBlocked = true;
-
-			this.gamePlay.setCursor(cursors.notallowed);
-			this.deselectCharCells(index);
-			this.attackHandler(this.gameState.selected, this.getCharInPositionByIndex(index))
-				.then(isNextLevel => {
-					this.gameState.selected = null;
-					if (isNextLevel) {
-						this.toNextLevel();
-					} else {
-						this.enemyTurn();
-
-						this.isEventsBlocked = false;
-					}
-				});
+			this.attack.attackCharacter(index);
 		}
+	}
+
+	showCharacterTooltip(character, index) {
+		this.setTooltipOnCharacter(index);
+		this.gamePlay.setCursor(cursors.pointer);
+	}
+
+	handleValidAttack(index) {
+		this.gamePlay.setCursor(cursors.crosshair);
+		this.gamePlay.selectCell(index, 'red');
+		this.isAttackValid = true;
+	}
+
+	handleValidMove(index) {
+		this.gamePlay.setCursor(cursors.pointer);
+		this.gamePlay.selectCell(index, 'green');
+		this.isMoveValid = true;
 	}
 
 	onCellEnter(index) {
@@ -201,19 +202,16 @@ export default class GameController {
 		const character = this.getCharInPositionByIndex(index);
 
 		if (character) {
-			this.setTooltipOnCharacter(index);
+			this.showCharacterTooltip(character, index);
 		}
 
 		if (this.userPlayerTeam.isOwnCharacter(character)) {
-			this.gamePlay.setCursor(cursors.pointer);
 			return;
 		}
 
 		if (this.compPlayerTeam.isOwnCharacter(character) && this.gameState.selected) {
-			if (this.isValidAttackArea(index)) {
-				this.gamePlay.setCursor(cursors.crosshair);
-				this.gamePlay.selectCell(index, 'red');
-				this.isAttackValid = true;
+			if (this.attack.isValidAttackArea(index)) {
+				this.handleValidAttack(index);
 			} else {
 				this.gamePlay.setCursor(cursors.notallowed);
 			}
@@ -221,10 +219,8 @@ export default class GameController {
 		}
 
 		if (!character && this.gameState.selected) {
-			if (this.isValidMoveArea(index)) {
-				this.gamePlay.setCursor(cursors.pointer);
-				this.gamePlay.selectCell(index, 'green');
-				this.isMoveValid = true;
+			if (this.movement.isValidMoveArea(index)) {
+				this.handleValidMove(index);
 			} else {
 				this.gamePlay.setCursor(cursors.notallowed);
 			}
@@ -262,12 +258,12 @@ export default class GameController {
 		return positionedChar;
 	}
 
-
 	getIndexByChar(char) {
-		return this.getPositionedCharByChar(char).position;
+		const positionedChar = this.getPositionedCharByChar(char);
+		return positionedChar ? positionedChar.position : null;
 	}
 
-	getCharactersFromPositionedCaracters() {
+	getCharactersFromPositionedCharacters() {
 		return this.gameState.positionedCharacters.map(item => item.character);
 	}
 
@@ -285,32 +281,11 @@ export default class GameController {
 	}
 
 	isValidAttackArea(index) {
-		const radius = this.gameState.selected.attackRange;
-		const selectedIndex = this.getIndexByChar(this.gameState.selected);
-		const [xTarget, yTarget] = this.getXYbyIndex(index);
-		const [xChar, yChar] = this.getXYbyIndex(selectedIndex);
-
-		return xTarget >= xChar - radius && xTarget <= xChar + radius
-			&& yTarget >= yChar - radius && yTarget <= yChar + radius;
+		return this.attack.isValidAttackArea(index);
 	}
 
 	isValidMoveArea(index) {
-		const radius = this.gameState.selected.moveRange;
-		const selectedIndex = this.getIndexByChar(this.gameState.selected);
-		const [xTarget, yTarget] = this.getXYbyIndex(index);
-		const [xChar, yChar] = this.getXYbyIndex(selectedIndex);
-
-		// Diagonal check
-		for (let x = xChar - radius, y1 = yChar - radius, y2 = yChar + radius; x <= xChar + radius; x++, y1++, y2--) {
-			if ((xTarget === x && yTarget === y1) || (xTarget === x && yTarget === y2)) {
-				return true;
-			}
-		}
-
-		const horizontalCheck = yTarget === yChar && xTarget >= xChar - radius && xTarget <= xChar + radius;
-		const verticalCheck = xTarget === xChar && yTarget >= yChar - radius && yTarget <= yChar + radius;
-
-		return horizontalCheck || verticalCheck;
+		return this.movement.isValidMoveArea(index);
 	}
 
 	getXYbyIndex(index) {
@@ -325,222 +300,47 @@ export default class GameController {
 		return y * 8 + x;
 	}
 
-	moveCharacterToIndex(char, index) {
-		const positionedChar = this.getPositionedCharByChar(char);
-
-		positionedChar.position = index;
-		this.gamePlay.redrawPositions(this.gameState.positionedCharacters);
-	}
-
-	attackHandler(attacker, target) {
-		return new Promise(resolve => {
-			const damage = Math.round(Math.max(attacker.attack - target.defence, attacker.attack * 0.1));
-			const index = this.getIndexByChar(target);
-
-
-			target.health = target.health - damage < 0 ? 0 : target.health - damage;
-
-			if (this.userPlayerTeam.isOwnCharacter(attacker)) {
-				this.gameState.score += damage;
-				this.gamePlay.renderScore(this.gameState.score);
-			}
-
-			this.gamePlay.showDamage(index, damage.toFixed())
-				.then(() => {
-					if (target.isDead()) {
-						this.removeCharFromTeam(target);
-					}
-
-					const isNextLevel = this.compPlayerTeam.isEmpty() || this.userPlayerTeam.isEmpty();
-
-					this.gamePlay.redrawPositions(this.gameState.positionedCharacters);
-					resolve(isNextLevel); // next turn
-				});
-		});
-	}
-
-	removeCharFromTeam(char) {
-		const index = this.gameState.positionedCharacters.findIndex(item => item.character === char);
-
-		this.gameState.positionedCharacters.splice(index, 1);
-		this.compPlayerTeam.remove(char);
-		this.userPlayerTeam.remove(char);
-	}
-
-	deselectCharCells(index) {
-		const selectedIndex = this.getIndexByChar(this.gameState.selected);
-
-		this.gamePlay.deselectCell(selectedIndex);
-		this.gamePlay.deselectCell(index);
-	}
-
-	enemyTurn() {
-		return new Promise(resolve => {
-			this.doTurn();
-			// setTimeout(resolve, 1000);
-			this.isEventsBlocked = false;
-			resolve();
-		});
-	}
-
-	doTurn() {
-		const opponents = this.getCloseInFightOpponents() || this.getDistanceFightOpponent();
-
-		if (opponents) {
-			const { char, target } = opponents;
-
-			this.attackHandler(char, target)
-				.then(isNextLevel => {
-					if (isNextLevel) {
-						this.toNextLevel();
-					}
-				});
-			return;
-		}
-		this.compCharMove();
-	}
-
-	getCloseInFightOpponents() {
-		const sortedChars = this.sortCharsBy([...this.compPlayerTeam.characters], 'attack');
-
-		for (const char of sortedChars) {
-			const targets = this.getAllTargetsInArea(char, 1);
-			if (!targets.length) {
-				continue;
-			}
-			const sortedTargets = this.sortCharsBy(targets, 'defence');
-			const target = sortedTargets[sortedTargets.length - 1];
-
-			return { char, target };
-		}
-		return null;
-	}
-
-	getDistanceFightOpponent() {
-		const sortedChars = this.sortCharsBy([...this.compPlayerTeam.characters], 'attackRange');
-
-		for (const char of sortedChars) {
-			const { attackRange } = char;
-			const targets = this.getAllTargetsInArea(char, attackRange);
-			if (!targets.length) {
-				continue;
-			}
-			const sortedTargets = this.sortCharsBy(targets, 'defence');
-			const target = sortedTargets[sortedTargets.length - 1];
-
-			return { char, target };
-		}
-		return null;
-	}
-
-	compCharMove() {
-		const char = this.sortCharsBy([...this.compPlayerTeam.characters], 'moveRange')[0];
-		const targets = this.getClosestTargetsInArea(char);
-		const target = this.sortCharsBy(targets, 'moveRange')[0];
-		const { boardSize } = this.gamePlay;
-		let maxRange = char.moveRange;
-		let x;
-		let y;
-		const [xC, yC] = this.getXYbyIndex(this.getIndexByChar(char));
-		const [xT, yT] = this.getXYbyIndex(this.getIndexByChar(target));
-
-		const angle = Math.atan2(xT - xC, yT - yC);
-		const roundedAngle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
-
-		do {
-			x = Math.round(Math.sin(roundedAngle) * maxRange);
-			y = Math.round(Math.cos(roundedAngle) * maxRange);
-			maxRange -= 1;
-		} while (xC + x < 0
-		|| yC + y < 0
-		|| xC + x >= boardSize
-		|| yC + y >= boardSize
-			|| this.getCharInPositionByIndex(this.getIndexByXY(xC + x, yC + y)));
-
-		const index = this.getIndexByXY(xC + x, yC + y);
-		this.moveCharacterToIndex(char, index);
-	}
-
 	sortCharsBy(chars, sortBy) {
-		chars.sort((char1, char2) => char2[sortBy] - char1[sortBy]);
-		return chars;
+		return this.attack.sortCharsBy(chars, sortBy);
 	}
 
 	getAllTargetsInArea(char, radius) {
-		const { boardSize } = this.gamePlay;
-		const [x, y] = this.getXYbyIndex(this.getIndexByChar(char));
-		const targets = [];
-
-		for (let i = x - radius; i <= x + radius; i++) {
-			for (let j = y - radius; j <= y + radius; j++) {
-				if (i >= boardSize || j >= boardSize || i < 0 || j < 0 || (i === x && j === y)) {
-					continue;
-				}
-				const index = this.getIndexByXY(i, j);
-				const target = this.getCharInPositionByIndex(index);
-
-				if (target && this.userPlayerTeam.isOwnCharacter(target)) {
-					targets.push(target);
-				}
-			}
-		}
-		return targets;
+		return this.attack.getAllTargetsInArea(char, radius);
 	}
 
 	getClosestTargetsInArea(char) {
-		const { boardSize } = this.gamePlay;
-		const [x, y] = this.getXYbyIndex(this.getIndexByChar(char));
-		const radius = Math.max(x, y, boardSize - x - 1, boardSize - y - 1);
+		return this.enemyAI.getClosestTargetsInArea(char);
+	}
 
-		for (let r = 2; r <= radius; r++) {
-			const targets = this.getAllTargetsInArea(char, r);
-			if (targets.length) {
-				return targets;
-			}
-		}
-		return null;
+	moveCharacterToIndex(char, index) {
+		this.movement.moveCharacterToIndex(char, index);
+	}
+
+	removeCharFromTeam(char) {
+		this.attack.removeCharFromTeam(char);
+	}
+
+	deselectCharCells(index) {
+		this.movement.deselectCharCells(index);
+	}
+
+	enemyTurn() {
+		this.enemyAI.enemyTurn();
+	}
+
+	attackHandler(attacker, target) {
+		return this.attack.attackHandler(attacker, target);
 	}
 
 	toNextLevel() {
-		this.isEventsBlocked = true;
-		if (this.gameState.currentLevel++ === 4) {
-			this.gameOver();
-			return;
-		}
-
-		for (const char of this.userPlayerTeam.characters) {
-			char.levelUp();
-		}
-		for (const char of this.compPlayerTeam.characters) {
-			char.levelUp();
-		}
-
-		this.gameState.positionedCharacters = [];
-
-		this.gamePlay.drawUi(Array.from(themes)[this.gameState.currentLevel - 1]);
-		this.addNewCharsToTeam(this.gameState.currentLevel - 1);
-		this.placeUserTeamOnBoard();
-		this.placeCompTeamOnBoard();
-		this.gamePlay.renderScore(this.gameState.score);
-		this.gamePlay.redrawPositions(this.gameState.positionedCharacters);
-
-		this.isEventsBlocked = false;
+		this.attack.toNextLevel();
 	}
 
-	addNewCharsToTeam() {
-		const countOfNewUserChars = this.gamePlay.initialNumberOfChars - this.userPlayerTeam.count;
-		const countOfNewCompChars = this.gamePlay.initialNumberOfChars - this.compPlayerTeam.count;
-
-		this.userPlayerTeam.addRandomChar(1, countOfNewUserChars);
-		this.compPlayerTeam.addRandomChar(1, countOfNewCompChars);
+	addNewCharsToTeam(level) {
+		this.initialization.addNewCharsToTeam(level);
 	}
 
 	gameOver() {
-		const hiScore = this.gameStateService.loadHiScore();
-
-		alert(`Игра окончена. Вы набрали ${this.gameState.score} очков.\n Рекорд ${hiScore} очков`);
-		if (this.gameState.score > hiScore) {
-			this.gameStateService.saveHiScore(this.gameState.score);
-		}
+		this.attack.gameOver();
 	}
 }
